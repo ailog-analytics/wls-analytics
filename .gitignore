@@ -1,0 +1,5 @@
+.vscode
+etc/test
+*.pyc
+.python-version
+.envrc
