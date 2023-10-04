@@ -45,7 +45,7 @@ setup(
     include_package_data=True,
     install_requires=install_requires,
     python_requires=">=3.11.3",
-    scripts=["bin/wls-analytics"],
+    scripts=["bin/wlsanalytics"],
     classifiers=[
         "Development Status :: 5 - Production/Stable",
         "Environment :: Console",
