@@ -6,7 +6,7 @@ import signal
 import traceback
 import sys
 
-from .log import log
+from .log import soa
 from .click_ext import CoreCommandGroup
 from .. import config
 
@@ -28,4 +28,4 @@ def wls_analytics():
     pass
 
 
-wls_analytics.add_command(log)
+wls_analytics.add_command(soa)

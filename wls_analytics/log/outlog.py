@@ -194,18 +194,18 @@ class SOAOutLogEntry(OutLogEntry):
 
 
 class SOAGroupEntry:
-    def __init__(self, entry, label_parser=None, index=None, logfile=None) -> None:
+    def __init__(self, entry, ext_parser=None, index=None, logfile=None) -> None:
         self.entries = []
         self.first_time = None
         self.last_time = None
         self.modified = False
         self.add_entry(entry)
-        self.label_parser = label_parser
+        self.ext_parser = ext_parser
         self._dn = None
         self._seconds = None
-        self._label = None
         self.index = index
         self.logfile = logfile
+        self._ext_data = None
 
     def add_entry(self, entry) -> bool:
         if len(self.entries) == 0 or self.entries[0].flow_id == entry.flow_id:
@@ -290,20 +290,23 @@ class SOAGroupEntry:
         return self.last_time - self.first_time
 
     @property
-    def label(self):
-        if self._label is None and self.label_parser is not None:
-            for parser in self.label_parser:
-                for e in self.entries:
-                    m = next(re.finditer(parser["pattern"], e.payload, re.MULTILINE), None)
-                    if m:
-                        self._label = parser["label"](m) if callable(parser["label"]) else parser["label"]
+    def ext_data(self):
+        if self._ext_data is None and self.ext_parser is not None:
+            self._ext_data = {}
+            for key, rules in self.ext_parser.items():
+                self._ext_data[key] = None
+                for rule in rules:
+                    for e in self.entries:
+                        m = next(re.finditer(rule["pattern"], e.payload, re.MULTILINE), None)
+                        if m:
+                            self._ext_data[key] = rule["value"](m) if callable(rule["value"]) else rule["value"]
+                            break
+                    if self._ext_data[key] is not None:
                         break
-                if self._label is not None:
-                    break
-        return self._label
+        return self._ext_data
 
     def to_dict(self):
-        return dict(
+        d = dict(
             time=self.time,
             flow_id=self.flow_id,
             timespan=self.timespan,
@@ -313,9 +316,11 @@ class SOAGroupEntry:
             component=self.component,
             seconds_begin=self.seconds_begin,
             seconds_left=self.seconds_left,
-            label=self.label,
             index=self.index.create_item(self, self.logfile) if self.index is not None else None,
         )
+        for k, v in self.ext_data.items():
+            d["ext_" + k] = v
+        return d
 
 
 class SOAGroupIndex:
@@ -400,7 +405,7 @@ class SOALogReader(LogReader):
         start_pos: int = None,
         time_to: datetime = None,
         overlap=30,
-        label_parser=None,
+        ext_parser=None,
         chunk_size=1024,
         progress=None,
         index=None,
@@ -432,9 +437,7 @@ class SOALogReader(LogReader):
                             group = g
                             break
                     if group is None:
-                        groups.append(
-                            SOAGroupEntry(entry, label_parser=label_parser, index=index, logfile=self.logfile)
-                        )
+                        groups.append(SOAGroupEntry(entry, ext_parser=ext_parser, index=index, logfile=self.logfile))
                 else:
                     # add extra entry to the existing group. the entry is beyond the end of the the time range
                     # but it has flow_id of the existing group so we need to include it

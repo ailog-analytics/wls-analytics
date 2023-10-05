@@ -46,23 +46,22 @@ class OffsetOption(click.Option):
         if value is None:
             return None
         offset_units = {"h": "hours", "d": "days", "m": "minutes"}
-        if value[-1] in offset_units:
+        unit = value[-1]
+        if unit in offset_units:
             try:
-                offset_value = int(value[:-1])
-                offset_unit = offset_units[value[-1]]
-                return timedelta(**{offset_unit: offset_value})
-            except (ValueError, KeyError):
+                value = int(value[:-1])
+                return timedelta(**{offset_units[unit]: value})
+            except ValueError:
                 pass
-
         raise click.BadParameter("use values like '1h', '2d', '10m'.")
 
 
 @click.command(cls=BaseCommandConfig, log_handlers=["file"])
-@click.argument("set", required=True)
-def range(config, log, set):
-    logs_set = config(f"sets.{set}")
+@click.argument("set_name", metavar="<SET>", required=True)
+def range(config, log, set_name):
+    logs_set = config(f"sets.{set_name}")
     if logs_set is None:
-        raise Exception(f"The log set '{set}' not found in the configuration file.")
+        raise Exception(f"The log set '{set_name}' not found in the configuration file.")
 
     range_data = []
     for server_name, files in list_files(
@@ -120,22 +119,32 @@ def make_label_function(label):
 
 
 def load_parser(parsers_def, sets: list):
-    _parser = []
+    _parser = {}
     for parser_def in parsers_def:
         if any(item in parser_def["sets"] for item in sets):
-            for rule in parser_def["rules"]:
-                _parser.append({"pattern": rule["pattern"], "label": make_label_function(rule["label"])})
+            for key, rules in parser_def["rules"].items():
+                if key not in _parser:
+                    _parser[key] = []
+                for rule in rules:
+                    _parser[key].append({"pattern": rule["pattern"], "value": make_label_function(rule["value"])})
     return _parser
 
 
-@click.command(cls=BaseCommandConfig, log_handlers=["file"])
-@click.argument("set_name", required=True)
+def format_composite(v, max_len=35):
+    if len(v) > max_len:
+        return v[: max_len - 1] + "…"
+    else:
+        return v
+
+
+@click.command(name="error", cls=BaseCommandConfig, log_handlers=["file"])
+@click.argument("set_name", metavar="<SET>", required=True)
 @click.option("--from", "-f", "time_from", cls=DateTimeOption, help="Start time (default: derived from --offset)")
 @click.option("--to", "-t", "time_to", cls=DateTimeOption, help="End time (default: current time)")
 @click.option("--offset", "-o", cls=OffsetOption, help="Time offset to derive --from from --to")
 @click.option("--index", "-i", "use_index", is_flag=True, default=False, help="Create index for entries.")
 @click.option("--silent", "-s", "silent", is_flag=True, default=False, help="Do not display progress and other stats.")
-def errors(config, log, silent, set_name, time_from, time_to, offset, use_index):
+def get_error(config, log, silent, set_name, time_from, time_to, offset, use_index):
     logs_set = config(f"sets.{set_name}")
     if logs_set is None:
         raise Exception(f"The log set '{set_name}' not found in the configuration file.")
@@ -180,7 +189,7 @@ def errors(config, log, silent, set_name, time_from, time_to, offset, use_index)
         else None
     )
 
-    label_parser = load_parser(config("parsers"), [set_name])
+    ext_parser = load_parser(config("parsers"), [set_name])
     index = SOAGroupIndex() if use_index else None
     if index:
         cleanup_indexdir()
@@ -190,9 +199,11 @@ def errors(config, log, silent, set_name, time_from, time_to, offset, use_index)
         reader.open()
         try:
             for entry in reader.read_errors(
-                start_pos=item["start_pos"], time_to=time_to, progress=pbar, label_parser=label_parser, index=index
+                start_pos=item["start_pos"], time_to=time_to, progress=pbar, ext_parser=ext_parser, index=index
             ):
                 d = entry.to_dict()
+                if sys.stdout.isatty():
+                    d["composite"] = format_composite(d["composite"])
                 d["file"] = item["file"]
                 item["data"].append(d)
                 item["data"][-1]["server"] = server
@@ -227,8 +238,9 @@ def errors(config, log, silent, set_name, time_from, time_to, offset, use_index)
         {"name": "FLOW_ID", "value": "{flow_id}", "help": "Flow ID"},
         {"name": "COMPOSITE", "value": "{composite}", "help": "Composite name"},
         {"name": "VERSION", "value": "{version}", "help": "Composite version"},
-        {"name": "LABEL", "value": "{label}", "help": "Error label"},
     ]
+    for key in ext_parser.keys():
+        table_def.append({"name": key.upper(), "value": "{ext_" + key + "}", "help": "Extended attribute"})
     if use_index:
         table_def.append({"name": "INDEX", "value": "{index}", "help": "Index entry ID"})
 
@@ -237,10 +249,10 @@ def errors(config, log, silent, set_name, time_from, time_to, offset, use_index)
         print(f"-- Errors: {len(data)}")
 
 
-@click.command(cls=BaseCommandConfig, log_handlers=["file"])
+@click.command(name="index", cls=BaseCommandConfig, log_handlers=["file"])
 @click.argument("id", required=True)
 @click.option("--stdout", "-s", is_flag=True, help="Print to stdout instead of using less")
-def index(config, log, id, stdout):
+def index_error(config, log, id, stdout):
     index = SOAGroupIndex(read=True)
     item = index.search(id)
     if item is None:
@@ -253,17 +265,11 @@ def index(config, log, id, stdout):
             print(index.output(item))
 
 
-@click.group(help="Log commands.")
-def log():
-    pass
-
-
-@click.group(help="SOA Log commands.")
+@click.group(help="SOA log commands.")
 def soa():
     pass
 
 
-log.add_command(soa)
-soa.add_command(errors)
+soa.add_command(get_error)
 soa.add_command(range)
-soa.add_command(index)
+soa.add_command(index_error)
