@@ -3,3 +3,5 @@ etc/test
 *.pyc
 .python-version
 .envrc
+*.egg-info
+dist/*
