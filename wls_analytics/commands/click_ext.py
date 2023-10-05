@@ -43,11 +43,11 @@ class CoreCommandGroup(click.core.Group):
 
         # pylint: disable=broad-except
         try:
-            for sig in ("TERM", "INT"):
-                signal.signal(
-                    getattr(signal, "SIG" + sig),
-                    lambda x, y: config.exit_event.set(),
-                )
+            # for sig in ("TERM", "INT"):
+            #     signal.signal(
+            #         getattr(signal, "SIG" + sig),
+            #         lambda x, y: config.exit_event.set(),
+            #     )
             click.core.Group.invoke(self, ctx)
         except click.exceptions.Exit as exception:
             sys.exit(int(str(exception)))
