@@ -12,35 +12,32 @@ import threading
 import sys
 import subprocess
 
-from ..log import SOALogReader, LogReader, OutLogEntry, get_files, list_files, DEFAULT_DATETIME_FORMAT, Index
+from ..log import (
+    SOALogReader,
+    LogReader,
+    OutLogEntry,
+    get_files,
+    list_files,
+    DEFAULT_DATETIME_FORMAT,
+    SOAGroupIndex,
+    cleanup_indexdir,
+)
 
 from ..json2table import Table
 from ..config import DATA_DIR
 
 from .click_ext import BaseCommandConfig
 
-INDEX_FILE = os.path.join(DATA_DIR, "wlsanalytics.index")
-
 
 class DateTimeOption(click.Option):
     def type_cast_value(self, ctx, value):
         if value is None:
             return None
-        try:
-            return datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
-        except ValueError:
+        for fmt in ["%Y-%m-%d %H:%M:%S", "%H:%M:%S", "%H:%M"]:
             try:
-                time_value = datetime.strptime(value, "%H:%M:%S").time()
-                today = datetime.now().date()
-                return datetime.combine(today, time_value)
+                return datetime.strptime(value, fmt)
             except ValueError:
-                try:
-                    time_value = datetime.strptime(value, "%H:%M").time()
-                    today = datetime.now().date()
-                    return datetime.combine(today, time_value)
-                except ValueError:
-                    pass
-
+                pass
         raise click.BadParameter("use values in the format '%Y-%m-%d %H:%M:%S', '%H:%M:%S' or '%H:%M'.")
 
 
@@ -58,18 +55,6 @@ class OffsetOption(click.Option):
                 pass
 
         raise click.BadParameter("use values like '1h', '2d', '10m'.")
-
-
-# def soaerrors_label_parser():
-#     return [
-#         {"pattern": "ErrMsg=([A-Z_0-9]+)", "label": lambda x: x.group(1)},  # BRM error
-#         {"pattern": "(SBL-DAT-[0-9]+)", "label": lambda x: x.group(1)},  # Siebel data error
-#         {"pattern": "(SBL-EAI-[0-9]+)", "label": lambda x: x.group(1)},  # Siebel EAI error
-#         {
-#             "pattern": "Response:\s+'?([0-9]+).*for url.+'http(.+)'",
-#             "label": lambda x: x.group(1) + "_" + x.group(2).split("/")[-1],  # status code + service name
-#         },
-#     ]
 
 
 @click.command(cls=BaseCommandConfig, log_handlers=["file"])
@@ -148,7 +133,9 @@ def load_parser(parsers_def, sets: list):
 @click.option("--from", "-f", "time_from", cls=DateTimeOption, help="Start time (default: derived from --offset)")
 @click.option("--to", "-t", "time_to", cls=DateTimeOption, help="End time (default: current time)")
 @click.option("--offset", "-o", cls=OffsetOption, help="Time offset to derive --from from --to")
-def errors(config, log, set_name, time_from, time_to, offset):
+@click.option("--index", "-i", "use_index", is_flag=True, default=False, help="Create index for entries.")
+@click.option("--silent", "-s", "silent", is_flag=True, default=False, help="Do not display progress and other stats.")
+def errors(config, log, silent, set_name, time_from, time_to, offset, use_index):
     logs_set = config(f"sets.{set_name}")
     if logs_set is None:
         raise Exception(f"The log set '{set_name}' not found in the configuration file.")
@@ -163,8 +150,9 @@ def errors(config, log, set_name, time_from, time_to, offset):
         time_from = time_to - offset
 
     start_time = time.time()
-    print(f"-- Time range: {time_from} - {time_to}")
-    print(f"-- Searching files in the set '{set_name}'")
+    if not silent:
+        print(f"-- Time range: {time_from} - {time_to}")
+        print(f"-- Searching files in the set '{set_name}'")
 
     soa_files = get_files(
         logs_set.directories,
@@ -173,23 +161,29 @@ def errors(config, log, set_name, time_from, time_to, offset):
         lambda fname: re.search(logs_set.filename_pattern, fname),
     )
 
-    if len(soa_files) == 0:
+    if len(soa_files) == 0 and not silent:
         print("-- No files found.")
         return
 
     total_size = sum([item["end_pos"] - item["start_pos"] for items in soa_files.values() for item in items])
     num_files = sum([len(items) for items in soa_files.values()])
-    pbar = tqdm(
-        desc=f"-- Reading entries from {num_files} files",
-        total=total_size,
-        unit="B",
-        unit_scale=True,
-        unit_divisor=1024,
-        ncols=100,
+    pbar = (
+        tqdm(
+            desc=f"-- Reading entries from {num_files} files",
+            total=total_size,
+            unit="B",
+            unit_scale=True,
+            unit_divisor=1024,
+            ncols=100,
+        )
+        if not silent
+        else None
     )
 
     label_parser = load_parser(config("parsers"), [set_name])
-    index = Index()
+    index = SOAGroupIndex() if use_index else None
+    if index:
+        cleanup_indexdir()
 
     def _read_entries(server, item):
         reader = SOALogReader(item["file"])
@@ -209,9 +203,10 @@ def errors(config, log, set_name, time_from, time_to, offset):
         for item in items:
             _read_entries(server, item)
 
-    index.write(INDEX_FILE)
+    if use_index:
+        index.write()
 
-    pbar.close()
+    pbar.close() if pbar is not None else None
     data = []
     for server, items in soa_files.items():
         for item in items:
@@ -219,11 +214,12 @@ def errors(config, log, set_name, time_from, time_to, offset):
 
     data = sorted(data, key=lambda x: x["time"])
 
-    if len(data) == 0:
+    if len(data) == 0 and not silent:
         print("-- No errors found.")
         return
 
-    print(f"-- Completed in {time.time() - start_time:.2f}s")
+    if not silent:
+        print(f"-- Completed in {time.time() - start_time:.2f}s")
 
     table_def = [
         {"name": "TIME", "value": "{time}", "help": "Error time"},
@@ -232,28 +228,29 @@ def errors(config, log, set_name, time_from, time_to, offset):
         {"name": "COMPOSITE", "value": "{composite}", "help": "Composite name"},
         {"name": "VERSION", "value": "{version}", "help": "Composite version"},
         {"name": "LABEL", "value": "{label}", "help": "Error label"},
-        {"name": "INDEX", "value": "{index}", "help": "Entry index"},
     ]
+    if use_index:
+        table_def.append({"name": "INDEX", "value": "{index}", "help": "Index entry ID"})
+
     Table(table_def, None, False).display(data)
-    print(f"-- Errors: {len(data)}")
+    if not silent:
+        print(f"-- Errors: {len(data)}")
 
 
 @click.command(cls=BaseCommandConfig, log_handlers=["file"])
 @click.argument("id", required=True)
 @click.option("--stdout", "-s", is_flag=True, help="Print to stdout instead of using less")
 def index(config, log, id, stdout):
-    index = Index(INDEX_FILE)
-    filename, item = index.search(id)
-    if filename is None:
-        print(f"Index entry '{id}' not found.")
-        return
+    index = SOAGroupIndex(read=True)
+    item = index.search(id)
+    if item is None:
+        raise Exception(f"Index entry '{id}' not found.")
     else:
-        output = f"log_file: {filename}\n" + f"index_file: {INDEX_FILE}\n\n" + "\n".join(item["messages"])
         if not stdout:
             cmd = ["less"]
-            subprocess.run(cmd, input=output.encode("utf-8"))
+            subprocess.run(cmd, input=index.output(item))
         else:
-            print(output)
+            print(index.output(item))
 
 
 @click.group(help="Log commands.")

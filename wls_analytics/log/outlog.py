@@ -3,9 +3,11 @@
 
 import re
 import os
+import gzip
 from .logreader import LogEntry, LogReader
 
 from ..utils import generate_word
+from ..config import DATA_DIR
 
 from typing import Iterator, Tuple
 
@@ -22,6 +24,26 @@ EXCEPTION_PATTERN = re.compile(r"\b([a-zA-Z\.0-9]+?\.[a-zA-Z0-9]+?Exception)(?!\
 
 COMPONENT_PATTERN = re.compile(r"ComponentDN: ([\w]+)\/([\w]+)\!([0-9\.]+).*?\/([\w]+)", re.MULTILINE)
 SECONDS_PATTERN = re.compile(r"seconds since begin=([0-9]+).+seconds left=([0-9]+)", re.MULTILINE)
+
+try:
+    SESSION_ID = os.getsid(os.getpid())
+except:
+    SESSION_ID = 0
+
+INDEX_DIR = os.path.join(DATA_DIR, "index")
+SOAERRORS_INDEXFILE = os.path.join(INDEX_DIR, f"wlsa-soaerrors-{SESSION_ID}.index")
+
+
+def cleanup_indexdir(max_age=5):
+    if os.path.exists(INDEX_DIR):
+        for f in os.listdir(INDEX_DIR):
+            if f.endswith(".index"):
+                fname = os.path.join(INDEX_DIR, f)
+                mtime = os.path.getmtime(fname)
+                mod_time = datetime.fromtimestamp(mtime)
+                age = datetime.now() - mod_time
+                if age.days > max_age:
+                    os.remove(fname)
 
 
 def list_files(folders, filename_matcher):
@@ -171,47 +193,6 @@ class SOAOutLogEntry(OutLogEntry):
         return self._flow_id
 
 
-class Index:
-    def __init__(self, indexfile=None):
-        self.items = {}
-        self.used_ids = set()
-        if indexfile is not None:
-            self.read(indexfile)
-
-    def create_item(self, entries, logfile):
-        index_item = dict(id=None, messages=[e.message for e in entries])
-        while True:
-            _id = generate_word()
-            if _id not in self.used_ids:
-                break
-        index_item["id"] = _id
-        self.used_ids.add(_id)
-        if logfile not in self.items:
-            self.items[logfile] = []
-        self.items[logfile].append(index_item)
-        return _id
-
-    def search(self, id):
-        for logfile, items in self.items.items():
-            for item in items:
-                if item["id"] == id:
-                    return logfile, item
-        return None, None
-
-    def write(self, filename):
-        os.makedirs(os.path.dirname(filename), exist_ok=True)
-        with open(filename, "wb") as f:
-            pickle.dump(self, f)
-
-    def read(self, filename):
-        if not os.path.exists(filename):
-            raise FileNotFoundError(f"Index file {filename} does not exist.")
-        with open(filename, "rb") as f:
-            index = pickle.load(f)
-        self.items = index.items
-        self.used_ids = index.used_ids
-
-
 class SOAGroupEntry:
     def __init__(self, entry, label_parser=None, index=None, logfile=None) -> None:
         self.entries = []
@@ -333,8 +314,73 @@ class SOAGroupEntry:
             seconds_begin=self.seconds_begin,
             seconds_left=self.seconds_left,
             label=self.label,
-            index=self.index.create_item(self.entries, self.logfile) if self.index is not None else None,
+            index=self.index.create_item(self, self.logfile) if self.index is not None else None,
         )
+
+
+class SOAGroupIndex:
+    def __init__(self, indexfile=SOAERRORS_INDEXFILE, compress=True, read=False):
+        self._compress = compress
+        self.items = {}
+        self.used_ids = set()
+        self.indexfile = indexfile
+        if read:
+            self.read()
+
+    def create_item(self, group, logfile):
+        index_item = dict(
+            id=None, composite=group.composite, version=group.version, messages=[e.message for e in group.entries]
+        )
+        while True:
+            _id = generate_word()
+            if _id not in self.used_ids:
+                break
+        index_item["id"] = _id
+        self.used_ids.add(_id)
+        if logfile not in self.items:
+            self.items[logfile] = []
+        self.items[logfile].append(self.compress(index_item))
+        return _id
+
+    def compress(self, item):
+        if self._compress and "messages" in item:
+            item["messages"] = [gzip.compress(m.encode("utf-8")) for m in item["messages"]]
+        return item
+
+    def decompress(self, item):
+        if self._compress and "messages" in item:
+            item["messages"] = [gzip.decompress(m).decode("utf-8") for m in item["messages"]]
+        return item
+
+    def search(self, id):
+        for logfile, items in self.items.items():
+            for item in items:
+                if item["id"] == id:
+                    return dict(logfile=logfile, data=self.decompress(item))
+        return None
+
+    def write(self):
+        os.makedirs(os.path.dirname(self.indexfile), exist_ok=True)
+        with open(self.indexfile, "wb") as f:
+            pickle.dump(self, f)
+
+    def read(self):
+        if not os.path.exists(self.indexfile):
+            raise FileNotFoundError(f"Index file {self.indexfile} does not exist.")
+        with open(self.indexfile, "rb") as f:
+            index = pickle.load(f)
+        self.items = index.items
+        self.used_ids = index.used_ids
+
+    def output(self, item):
+        meta = dict(
+            index_id=item["data"]["id"],
+            composite=item["data"]["composite"],
+            version=item["data"]["version"],
+            log_file=item["logfile"],
+            index_file=self.indexfile,
+        )
+        return "\n".join([f"{k:<12}: {v}" for k, v in meta.items()] + [""] + item["data"]["messages"]).encode("utf-8")
 
 
 class SOALogReader(LogReader):
