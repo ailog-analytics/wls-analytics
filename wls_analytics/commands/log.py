@@ -11,6 +11,8 @@ import time
 import threading
 import sys
 import subprocess
+import operator
+
 
 from ..log import (
     SOALogReader,
@@ -137,6 +139,25 @@ def format_composite(v, max_len=35):
         return v
 
 
+def filter_rows(data, expression):
+    class RegexString(str):
+        def __eq__(self, other):
+            return bool(re.match("^" + other + "$", str(self)))
+
+    scope = {}
+    result = []
+    for row in data:
+        for key, value in row.items():
+            if isinstance(value, str):
+                scope[key] = RegexString(value)
+            else:
+                scope[key] = value
+        if eval(expression, scope):
+            result.append(row)
+
+    return result
+
+
 @click.command(name="error", cls=BaseCommandConfig, log_handlers=["file"])
 @click.argument("set_name", metavar="<SET>", required=True)
 @click.option("--from", "-f", "time_from", cls=DateTimeOption, help="Start time (default: derived from --offset)")
@@ -144,7 +165,10 @@ def format_composite(v, max_len=35):
 @click.option("--offset", "-o", cls=OffsetOption, help="Time offset to derive --from from --to")
 @click.option("--index", "-i", "use_index", is_flag=True, default=False, help="Create index for entries.")
 @click.option("--silent", "-s", "silent", is_flag=True, default=False, help="Do not display progress and other stats.")
-def get_error(config, log, silent, set_name, time_from, time_to, offset, use_index):
+@click.option("--filter", "filter_expression", required=False, help="filter expression.")
+def get_error(config, log, silent, set_name, time_from, time_to, offset, use_index, filter_expression):
+    cleanup_indexdir()
+    start_time = time.time()
     logs_set = config(f"sets.{set_name}")
     if logs_set is None:
         raise Exception(f"The log set '{set_name}' not found in the configuration file.")
@@ -158,11 +182,17 @@ def get_error(config, log, silent, set_name, time_from, time_to, offset, use_ind
     if time_from is None and offset is not None:
         time_from = time_to - offset
 
-    start_time = time.time()
     if not silent:
         print(f"-- Time range: {time_from} - {time_to}")
-        print(f"-- Searching files in the set '{set_name}'")
 
+    ext_parser = load_parser(config("parsers"), [set_name])
+
+    index = None
+    if use_index:
+        index = SOAGroupIndex(time_from, time_to, set_name)
+
+    if not silent:
+        print(f"-- Searching files in the set '{set_name}'")
     soa_files = get_files(
         logs_set.directories,
         time_from,
@@ -189,19 +219,13 @@ def get_error(config, log, silent, set_name, time_from, time_to, offset, use_ind
         else None
     )
 
-    ext_parser = load_parser(config("parsers"), [set_name])
-    index = SOAGroupIndex() if use_index else None
-    if index:
-        cleanup_indexdir()
-
     def _read_entries(server, item):
         reader = SOALogReader(item["file"])
         reader.open()
         try:
-            for entry in reader.read_errors(
-                start_pos=item["start_pos"], time_to=time_to, progress=pbar, ext_parser=ext_parser, index=index
-            ):
-                d = entry.to_dict()
+            entries = reader.read_entries(start_pos=item["start_pos"], time_to=time_to, progress=pbar)
+            for group in reader.group_entries(entries, time_to=time_to, ext_parser=ext_parser, index=index):
+                d = group.to_dict()
                 if sys.stdout.isatty():
                     d["composite"] = format_composite(d["composite"])
                 d["file"] = item["file"]
@@ -221,7 +245,7 @@ def get_error(config, log, silent, set_name, time_from, time_to, offset, use_ind
     data = []
     for server, items in soa_files.items():
         for item in items:
-            data.extend(item["data"])
+            data.extend(filter_rows(item["data"], filter_expression) if filter_expression is not None else item["data"])
 
     data = sorted(data, key=lambda x: x["time"])
 
@@ -237,10 +261,9 @@ def get_error(config, log, silent, set_name, time_from, time_to, offset, use_ind
         {"name": "SERVER", "value": "{server}", "help": "Server name"},
         {"name": "FLOW_ID", "value": "{flow_id}", "help": "Flow ID"},
         {"name": "COMPOSITE", "value": "{composite}", "help": "Composite name"},
-        {"name": "VERSION", "value": "{version}", "help": "Composite version"},
     ]
     for key in ext_parser.keys():
-        table_def.append({"name": key.upper(), "value": "{ext_" + key + "}", "help": "Extended attribute"})
+        table_def.append({"name": key.upper(), "value": "{" + key + "}", "help": "Extended attribute"})
     if use_index:
         table_def.append({"name": "INDEX", "value": "{index}", "help": "Index entry ID"})
 
@@ -253,7 +276,8 @@ def get_error(config, log, silent, set_name, time_from, time_to, offset, use_ind
 @click.argument("id", required=True)
 @click.option("--stdout", "-s", is_flag=True, help="Print to stdout instead of using less")
 def index_error(config, log, id, stdout):
-    index = SOAGroupIndex(read=True)
+    index = SOAGroupIndex()
+    index.read()
     item = index.search(id)
     if item is None:
         raise Exception(f"Index entry '{id}' not found.")

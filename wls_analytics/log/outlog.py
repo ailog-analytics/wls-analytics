@@ -5,6 +5,8 @@ import re
 import os
 import gzip
 from .logreader import LogEntry, LogReader
+import logging
+import struct
 
 from ..utils import generate_word
 from ..config import DATA_DIR
@@ -206,6 +208,7 @@ class SOAGroupEntry:
         self.index = index
         self.logfile = logfile
         self._ext_data = None
+        self.log = logging.getLogger("soa-group-entry")
 
     def add_entry(self, entry) -> bool:
         if len(self.entries) == 0 or self.entries[0].flow_id == entry.flow_id:
@@ -319,22 +322,36 @@ class SOAGroupEntry:
             index=self.index.create_item(self, self.logfile) if self.index is not None else None,
         )
         for k, v in self.ext_data.items():
-            d["ext_" + k] = v
+            if k not in d:
+                d[k] = v
+            else:
+                self.log.warning(f"Duplicate key {k} in SOAGroupEntry.to_dict()")
         return d
 
 
 class SOAGroupIndex:
-    def __init__(self, indexfile=SOAERRORS_INDEXFILE, compress=True, read=False):
+    def __init__(
+        self,
+        time_from: datetime = None,
+        time_to: datetime = None,
+        set_name: str = None,
+        indexfile=SOAERRORS_INDEXFILE,
+        compress=True,
+    ):
+        self.time_from = time_from
+        self.time_to = time_to
+        self.set_name = set_name
         self._compress = compress
         self.items = {}
         self.used_ids = set()
         self.indexfile = indexfile
-        if read:
-            self.read()
 
     def create_item(self, group, logfile):
         index_item = dict(
-            id=None, composite=group.composite, version=group.version, messages=[e.message for e in group.entries]
+            id=None,
+            composite=group.composite,
+            version=group.version,
+            messages=[e.message for e in group.entries],
         )
         while True:
             _id = generate_word()
@@ -364,18 +381,55 @@ class SOAGroupIndex:
                     return dict(logfile=logfile, data=self.decompress(item))
         return None
 
+    def _write_header(self, f):
+        fixed_length = 20
+        f.write(struct.pack("d", self.time_from.timestamp()))
+        f.write(struct.pack("d", self.time_to.timestamp()))
+        f.write(self.set_name.encode("utf-8")[:fixed_length].ljust(fixed_length, b"\0"))
+
+    def _read_header(self, f):
+        time_from = datetime.fromtimestamp(struct.unpack("d", f.read(8))[0])
+        time_to = datetime.fromtimestamp(struct.unpack("d", f.read(8))[0])
+        set_name = f.read(20).decode("utf-8").strip().rstrip("\0")
+        return dict(
+            time_from=time_from,
+            time_to=time_to,
+            set_name=set_name,
+        )
+
     def write(self):
         os.makedirs(os.path.dirname(self.indexfile), exist_ok=True)
         with open(self.indexfile, "wb") as f:
+            self._write_header(f)
             pickle.dump(self, f)
 
     def read(self):
         if not os.path.exists(self.indexfile):
             raise FileNotFoundError(f"Index file {self.indexfile} does not exist.")
         with open(self.indexfile, "rb") as f:
+            self._read_header(f)
             index = pickle.load(f)
         self.items = index.items
         self.used_ids = index.used_ids
+
+    def read_header(self):
+        if not os.path.exists(self.indexfile):
+            return None
+        with open(self.indexfile, "rb") as f:
+            return self._read_header(f)
+
+    def read_file_entries(self, file, ext_parser=None, progress=None):
+        _entries = []
+        for item in self.items[file]:
+            for m in self.decompress(item)["messages"]:
+                _entry = SOAOutLogEntry(0)
+                _entry.lines = m.split("\n")
+                _entry.parse_header(_entry.lines[0])
+                _entry.finish()
+                if progress is not None:
+                    progress.update(len(_entry.message))
+                _entries.append(_entry)
+        return _entries
 
     def output(self, item):
         meta = dict(
@@ -399,20 +453,15 @@ class SOALogReader(LogReader):
         """
         super().__init__(soaout_log, datetime_format, SOAOutLogEntry)
 
-    def read_errors(
+    def read_entries(
         self,
         time_from: datetime = None,
         start_pos: int = None,
         time_to: datetime = None,
         overlap=30,
-        ext_parser=None,
         chunk_size=1024,
         progress=None,
-        index=None,
-    ) -> Iterator[SOAGroupEntry]:
-        """
-        Read SOA errors from the log file.
-        """
+    ) -> Iterator[LogEntry]:
         if time_from is not None and start_pos is not None:
             raise ValueError("Only one of time_from or start_pos should be provided, not both.")
 
@@ -426,6 +475,19 @@ class SOALogReader(LogReader):
             entries.append(entry)
             if progress is not None:
                 progress.update(len(entry.message))
+
+        return entries
+
+    def group_entries(
+        self,
+        entries: list,
+        time_to: datetime,
+        ext_parser=None,
+        index=None,
+    ) -> Iterator[SOAGroupEntry]:
+        """
+        Read SOA errors from the log file.
+        """
 
         groups = []
         for entry in entries:

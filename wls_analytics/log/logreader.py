@@ -5,6 +5,7 @@ import os
 import re
 from datetime import datetime
 from typing import Iterator, Any, Type, List, Callable
+import logging
 
 from abc import ABC, abstractmethod
 
@@ -23,6 +24,7 @@ class LogEntry(ABC):
         self._message = None
         self.lines = []
         self.pos = pos
+        self.log = logging.getLogger("log-entry")
 
     def add_line(self, line: str) -> None:
         """
@@ -78,6 +80,7 @@ class LogReader(ABC):
         self.logentry_class = logentry_class
         self.logfile = logfile
         self.datetime_format = datetime_format
+        self.log = logging.getLogger("log-reader")
 
     def open(self, reopen=False):
         """
