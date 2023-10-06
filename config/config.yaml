@@ -1,0 +1,66 @@
+# wls-analytics sample configuration file 
+# @author: Tomas Vitvar, https://vitvar.com, tomas@vitvar.com
+
+# log files sets; there can be multiple sets of log files
+sets:
+  # set name
+  o2c:
+    # regular expression to match log file names
+    # the first group is used as a server name
+    filename_pattern: "(soa_server[0-9]+).out([0-9]+)?$"
+
+    # list of directories to search for log files
+    directories: 
+      - /path/to/logs/data/o2c
+
+# definitions of parsers
+parsers:
+  # parser name
+  - name: soa_errorlabels
+
+    # list of log file sets to parse
+    sets:
+      - o2c
+      - aabc
+
+    # list of rules to apply  
+    # the rules contain fields that will be created in the output
+    # the list of rules will be applied in order; the first match will be used
+    # if no match is found, the field will be empty 
+    rules:
+      # the error field
+      error:
+        - pattern: "ErrMsg=([A-Z_0-9]+)"
+          value: "{1}"
+        - pattern: "(SBL-(DAT|EAI|BPR)-[0-9]+)"
+          value: "{1}"
+        - pattern: "Response:\\s+'?([0-9]+).*for url.+'http(.+)'"
+          value: "HTTP_STATUS_{1}"
+        - pattern: "Error parsing envelope: most likely due to an invalid SOAP message"
+          value: "INVALID_SOAP_MESSAGE"
+        - pattern: "Value.+for column.+in table.+xref.+already exists"
+          value: "XREF_ALREADY_EXISTS"
+        - pattern: "(XML-[0-9]+)"
+          value: "{1}"
+        - pattern: "Read timed out after ([0-9]+)sec"
+          value: "READ_TIMEOUT"
+        - pattern: "Session Token is missing or invalid or has expired"
+          value: "INVALID_SESSION_TOKEN" 
+        - pattern: "The pool is maxed out and all sessions are in use"
+          value: "SPM_POOL_MAXED_OUT"
+
+      # the error detail field
+      detail:
+        - pattern: "Read timed out after ([0-9]+)sec"
+          value: "TIMEOUT_{1}"
+        - pattern: "JCA Binding execute of Reference operation '([A-Z_]+)' failed"
+          value: "{1}"
+        - pattern: "Error running sub-process '([A-Za-z0-9_\\- ]+)'"
+          value: "{1}"
+        - pattern: "Error invoking service '([A-Za-z0-9_\\- ]+)'"
+          value: "{1}"
+        - pattern: "in table ..+.xref.([A-Z_]+).xref. already exists"
+          value: "{1}"
+        - pattern: "Sessions In Use.([0-9]+)."
+          value: "SESSIONS_IN_USE_{1}"
+
