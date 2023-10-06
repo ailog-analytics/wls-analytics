@@ -60,9 +60,10 @@ As a result, you will get the following output:
 -- Reading entries from 2 files: 83.6MB [00:07, 12.4MB/s]
 -- Completed in 9.43s
 TIME                        SERVER       FLOW_ID     COMPOSITE                            ERROR                  DETAIL
-2023-09-19 11:06:51.875000  soa_server1  1293508714  SyncCustomerPartyListBRMCommsProvA…  ERR_VALIDATION_FAILED  PCM_OP_CUST_UPDATE_CUSTOMER
-2023-09-19 11:07:33.145000  soa_server1  1293447650  SyncCustomerPartyListBRMCommsProvA…  ERR_VALIDATION_FAILED  PCM_OP_CUST_UPDATE_CUSTOMER
-2023-09-19 11:08:02.565000  soa_server1  1293525804  SyncCustomerPartyListBRMCommsProvA…  ERR_VALIDATION_FAILED  PCM_OP_CUST_UPDATE_CUSTOMER
+2023-09-19 11:06:51.875000  soa_server1  1293508714  SyncCustomerPartyListBRMCommsProvA…  ERR_VALIDATION_FAILED  PCM_OP_UPDATE_CUSTOMER
+2023-09-19 11:07:33.145000  soa_server1  1293447650  SyncCustomerPartyListBRMCommsProvA…  ERR_VALIDATION_FAILED  PCM_OP_UPDATE_CUSTOMER
+2023-09-19 11:08:02.565000  soa_server1  1293525804  SyncCustomerPartyListBRMCommsProvA…  ERR_VALIDATION_FAILED  PCM_OP_UPDATE_CUSTOMER
+...
 ```
     
 When you use the index option `--index`, there will be an index created for the output. You can then use to explore log entries that belong to specifc error by using the index value.    
