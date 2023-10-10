@@ -1,7 +1,9 @@
 
-# $ wls-analytics: Advanced Log Analysis for WebLogic Server Clusters 
+# $ wls-analytics
 
-In the intricate landscape of clustered WebLogic servers, managing and analyzing logs can pose a significant challenge. 
+**Advanced Log Analysis for WebLogic Server Clusters **
+
+In the landscape of clustered WebLogic servers, managing and analyzing logs can pose a significant challenge. 
 
 wls-analytics offers a range of features tailored to the complexities of clustered WebLogic servers. It enables administrators and engineers to dissect logs within specific time intervals, construct efficient index files, and apply customizable patterns for data categorization.
 
