@@ -227,12 +227,26 @@ def merge(dict1, dict2):
 
 class IndexWordGenerator(Iterable):
     def __init__(self) -> None:
+        def randomize(s):
+            _s = list(s)
+            random.shuffle(_s)
+            return "".join(_s)
+
         vowels = "aeiou"
-        consonants = "bcdfghjklmnpqrstvwxz"
+        consonants = "bcdfghjklmnprstvwxz"
         numbers = "123456789"
-        self.words = list(itertools.product(consonants, vowels, consonants, vowels, numbers, numbers + "0"))
+        self.words = list(
+            itertools.product(
+                randomize(consonants),
+                randomize(vowels),
+                randomize(consonants),
+                randomize(vowels),
+                randomize(numbers),
+                randomize(numbers + "0"),
+            )
+        )
         self.current_set = None
-        self.size = 10000
+        self.size = 200000
         self.next_set(0, self.size)
 
     def next_set(self, start, end):
@@ -243,6 +257,7 @@ class IndexWordGenerator(Iterable):
         random.shuffle(self.current_set)
         self.start = start
         self.end = end
+        return True
 
     def __iter__(self):
         return self
