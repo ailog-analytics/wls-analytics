@@ -164,9 +164,10 @@ def filter_rows(data, expression):
 @click.option("--to", "-t", "time_to", cls=DateTimeOption, help="End time (default: current time)")
 @click.option("--offset", "-o", cls=OffsetOption, help="Time offset to derive --from from --to")
 @click.option("--index", "-i", "use_index", is_flag=True, default=False, help="Create index for entries.")
+@click.option("--index-file", "indexfile", default=None, help="Use index file instead of the default one.")
 @click.option("--silent", "-s", "silent", is_flag=True, default=False, help="Do not display progress and other stats.")
 @click.option("--filter", "filter_expression", required=False, help="filter expression.")
-def get_error(config, log, silent, set_name, time_from, time_to, offset, use_index, filter_expression):
+def get_error(config, log, silent, set_name, time_from, time_to, offset, use_index, indexfile, filter_expression):
     cleanup_indexdir()
     start_time = time.time()
     logs_set = config(f"sets.{set_name}")
@@ -189,7 +190,7 @@ def get_error(config, log, silent, set_name, time_from, time_to, offset, use_ind
 
     index = None
     if use_index:
-        index = SOAGroupIndex(time_from, time_to, set_name)
+        index = SOAGroupIndex(time_from, time_to, set_name, indexfile=indexfile)
 
     if not silent:
         print(f"-- Searching files in the set '{set_name}'")
@@ -275,8 +276,9 @@ def get_error(config, log, silent, set_name, time_from, time_to, offset, use_ind
 @click.command(name="index", cls=BaseCommandConfig, log_handlers=["file"])
 @click.argument("id", required=True)
 @click.option("--stdout", "-s", is_flag=True, help="Print to stdout instead of using less")
-def index_error(config, log, id, stdout):
-    index = SOAGroupIndex()
+@click.option("--index-file", "indexfile", default=None, help="Use index file instead of the default one.")
+def index_error(config, log, id, stdout, indexfile):
+    index = SOAGroupIndex(indexfile=indexfile)
     index.read()
     item = index.search(id)
     if item is None:
