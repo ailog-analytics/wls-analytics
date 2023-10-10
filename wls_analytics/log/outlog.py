@@ -7,8 +7,9 @@ import gzip
 from .logreader import LogEntry, LogReader
 import logging
 import struct
+import time
 
-from ..utils import generate_word
+from ..utils import IndexWordGenerator
 from ..config import DATA_DIR
 
 from typing import Iterator, Tuple
@@ -343,8 +344,8 @@ class SOAGroupIndex:
         self.set_name = set_name
         self._compress = compress
         self.items = {}
-        self.used_ids = set()
         self.indexfile = indexfile if indexfile is not None else SOAERRORS_INDEXFILE
+        self.generator = IndexWordGenerator()
 
     def create_item(self, group, logfile):
         index_item = dict(
@@ -353,16 +354,11 @@ class SOAGroupIndex:
             version=group.version,
             messages=[e.message for e in group.entries],
         )
-        while True:
-            _id = generate_word()
-            if _id not in self.used_ids:
-                break
-        index_item["id"] = _id
-        self.used_ids.add(_id)
+        index_item["id"] = next(self.generator)
         if logfile not in self.items:
             self.items[logfile] = []
         self.items[logfile].append(self.compress(index_item))
-        return _id
+        return index_item["id"]
 
     def compress(self, item):
         if self._compress and "messages" in item:
@@ -410,7 +406,6 @@ class SOAGroupIndex:
             self._read_header(f)
             index = pickle.load(f)
         self.items = index.items
-        self.used_ids = index.used_ids
 
     def read_header(self):
         if not os.path.exists(self.indexfile):

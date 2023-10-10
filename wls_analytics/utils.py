@@ -7,6 +7,8 @@ import re
 import time
 import json
 import ast
+import itertools
+from collections.abc import Iterable
 
 from functools import reduce
 
@@ -223,13 +225,32 @@ def merge(dict1, dict2):
     return z
 
 
-vowels = "aeiou"
-consonants = "bcdfghjklmnpqrstvwxz"
+class IndexWordGenerator(Iterable):
+    def __init__(self) -> None:
+        vowels = "aeiou"
+        consonants = "bcdfghjklmnpqrstvwxz"
+        numbers = "123456789"
+        self.words = list(itertools.product(consonants, vowels, consonants, vowels, numbers, numbers + "0"))
+        self.current_set = None
+        self.size = 10000
+        self.next_set(0, self.size)
 
+    def next_set(self, start, end):
+        if start >= len(self.words):
+            raise False
+        self.index = 0
+        self.current_set = self.words[start : min(end, len(self.words))]
+        random.shuffle(self.current_set)
+        self.start = start
+        self.end = end
 
-def generate_word():
-    word = random.choice(consonants)
-    word += random.choice(vowels)
-    word += random.choice(consonants)
-    word += random.choice(vowels)
-    return word
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.index >= len(self.current_set):
+            if not self.next_set(self.end + 1, self.end + self.size):
+                raise StopIteration
+        value = self.current_set[self.index]
+        self.index += 1
+        return "".join(value)
