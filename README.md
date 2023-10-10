@@ -1,7 +1,7 @@
 
 # $ wls-analytics
 
-**Advanced Log Analysis for WebLogic Server Clusters **
+**Advanced Log Analysis for WebLogic Server Clusters**
 
 In the landscape of clustered WebLogic servers, managing and analyzing logs can pose a significant challenge. 
 
