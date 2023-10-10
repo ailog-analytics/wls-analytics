@@ -335,7 +335,7 @@ class SOAGroupIndex:
         time_from: datetime = None,
         time_to: datetime = None,
         set_name: str = None,
-        indexfile=SOAERRORS_INDEXFILE,
+        indexfile=None,
         compress=True,
     ):
         self.time_from = time_from
@@ -344,7 +344,7 @@ class SOAGroupIndex:
         self._compress = compress
         self.items = {}
         self.used_ids = set()
-        self.indexfile = indexfile
+        self.indexfile = indexfile if indexfile is not None else SOAERRORS_INDEXFILE
 
     def create_item(self, group, logfile):
         index_item = dict(

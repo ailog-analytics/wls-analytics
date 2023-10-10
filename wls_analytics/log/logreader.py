@@ -112,7 +112,7 @@ class LogReader(ABC):
         """
         return self.logentry_class(pos, self.datetime_format)
 
-    def get_datetime(self, first: bool, chunk_size: int = 1024) -> (datetime, int):
+    def get_datetime(self, first: bool, chunk_size: int = 1024, encoding: str = "utf-8") -> (datetime, int):
         """
         Get the first log entry date and position in the log file.
         """
@@ -122,7 +122,7 @@ class LogReader(ABC):
         next_pos = 0 if first else os.path.getsize(self.logfile) - chunk_size
         while next_pos >= 0 and next_pos < os.path.getsize(self.logfile) and num_negatives < 2:
             self.handler.seek(next_pos)
-            chunk = self.handler.read(chunk_size).decode("utf-8")
+            chunk = self.handler.read(chunk_size).decode(encoding, errors="replace")
             lines = chunk.split("\n")
             for l in lines:
                 dt = _entry.parse_datetime(l)
@@ -134,7 +134,7 @@ class LogReader(ABC):
                 num_negatives += 1
         return None, None
 
-    def find(self, time: datetime, chunk_size: int = 1024) -> int:
+    def find(self, time: datetime, chunk_size: int = 1024, encoding: str = "utf-8") -> int:
         """
         Find the pos of the entry in the log file where the time of the entry is equal or greater than `time`.
         When the log entry is not found, -1 is returned.
@@ -164,7 +164,7 @@ class LogReader(ABC):
             count = 0
             while count < 2:
                 # read a chunk of data; 70 is the minimum number of bytes to read to get a datetime
-                chunk = self.handler.read(min(chunk_size, end - start)).decode("utf-8")
+                chunk = self.handler.read(min(chunk_size, end - start)).decode(encoding, errors="replace")
                 lines = chunk.split("\n")
                 current_bytes = 0
                 for l in lines:
@@ -208,6 +208,7 @@ class LogReader(ABC):
         time_to: datetime = None,
         count: int = None,
         chunk_size: int = 1024,
+        encoding="utf-8",
     ) -> Iterator[LogEntry]:
         """
         Read the log file and return an iterator of log entries. The log entries are returned in the order
@@ -227,7 +228,7 @@ class LogReader(ABC):
         self.handler.seek(start_pos)
         while dt is None or (time_to is None or dt <= time_to):
             current_pos = self.handler.tell()
-            chunk = self.handler.read(chunk_size).decode("utf-8")
+            chunk = self.handler.read(chunk_size).decode(encoding, errors="replace")
             if len(chunk) == 0:
                 break
             lines = chunk.split("\n")
