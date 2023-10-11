@@ -160,15 +160,27 @@ def filter_rows(data, expression):
 
 @click.command(name="error", cls=BaseCommandConfig, log_handlers=["file"])
 @click.argument("set_name", metavar="<SET>", required=True)
-@click.option("--from", "-f", "time_from", cls=DateTimeOption, help="Start time (default: derived from --offset)")
-@click.option("--to", "-t", "time_to", cls=DateTimeOption, help="End time (default: current time)")
-@click.option("--offset", "-o", cls=OffsetOption, help="Time offset to derive --from from --to")
+@click.option(
+    "--from",
+    "-f",
+    "time_from",
+    metavar="<file>",
+    cls=DateTimeOption,
+    help="Start time (default: derived from --offset)",
+)
+@click.option("--to", "-t", "time_to", metavar="<file>", cls=DateTimeOption, help="End time (default: current time)")
+@click.option("--offset", "-o", metavar="<int>", cls=OffsetOption, help="Time offset to derive --from from --to")
 @click.option("--index", "-i", "use_index", is_flag=True, default=False, help="Create index for entries.")
-@click.option("--index-file", "indexfile", default=None, help="Use index file instead of the default one.")
+@click.option(
+    "--index-file", "indexfile", metavar="<file>", default=None, help="Use index file instead of the default one."
+)
+@click.option("--filter", "filter_expression", metavar="<expression>", required=False, help="filter expression.")
 @click.option("--silent", "-s", "silent", is_flag=True, default=False, help="Do not display progress and other stats.")
-@click.option("--filter", "filter_expression", required=False, help="filter expression.")
 def get_error(config, log, silent, set_name, time_from, time_to, offset, use_index, indexfile, filter_expression):
+    if indexfile is not None and not use_index:
+        raise Exception("The --index-file option can be used only with --index.")
     cleanup_indexdir()
+
     start_time = time.time()
     logs_set = config(f"sets.{set_name}")
     if logs_set is None:
@@ -190,6 +202,8 @@ def get_error(config, log, silent, set_name, time_from, time_to, offset, use_ind
 
     index = None
     if use_index:
+        if not silent:
+            print(f"-- The index will be created" + ("." if indexfile is None else f" in the file {indexfile}."))
         index = SOAGroupIndex(time_from, time_to, set_name, indexfile=indexfile)
 
     if not silent:
