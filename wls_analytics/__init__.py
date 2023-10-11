@@ -12,7 +12,7 @@ def __getattr__(name):
     """
     if name == "__version__":
         try:
-            return version("wls-anyltics")
+            return version("wls-analytics")
         except PackageNotFoundError as e:
             return "unknown"
     raise AttributeError(f"module {__name__} has no attribute {name}")
