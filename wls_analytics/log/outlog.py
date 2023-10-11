@@ -394,7 +394,9 @@ class SOAGroupIndex:
         )
 
     def write(self):
-        os.makedirs(os.path.dirname(self.indexfile), exist_ok=True)
+        _dir = os.path.dirname(self.indexfile)
+        if _dir != "" and not os.path.exists(_dir):
+            os.makedirs(_dir, exist_ok=True)
         with open(self.indexfile, "wb") as f:
             self._write_header(f)
             pickle.dump(self, f)
