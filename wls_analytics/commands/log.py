@@ -76,9 +76,9 @@ def range(config, log, set_name):
             reader = LogReader(fname, datetime_format=DEFAULT_DATETIME_FORMAT, logentry_class=OutLogEntry)
             first, _ = reader.get_datetime(True)
             last, _ = reader.get_datetime(False)
-            if range_item["min"] is None or first < range_item["min"]:
+            if first is not None and (range_item["min"] is None or first < range_item["min"]):
                 range_item["min"] = first
-            if range_item["max"] is None or last > range_item["max"]:
+            if last is not None and (range_item["max"] is None or last > range_item["max"]):
                 range_item["max"] = last
 
     range_data = sorted(range_data, key=lambda x: x["server"])
@@ -88,19 +88,19 @@ def range(config, log, set_name):
         {
             "name": "SIZE [GB]",
             "value": "{size}",
-            "format": lambda _, v, y: round(v / 1024 / 1024 / 1024, 2),
+            "format": lambda _, v, y: round(v / 1024 / 1024 / 1024, 2) if v is not None else 0,
             "help": "Total size",
         },
         {
             "name": "MIN",
             "value": "{min}",
-            "format": lambda _, v, y: v.replace(microsecond=0),
+            "format": lambda _, v, y: v.replace(microsecond=0) if v is not None else "n/a",
             "help": "Minimum datetime",
         },
         {
             "name": "MAX",
             "value": "{max}",
-            "format": lambda _, v, y: v.replace(microsecond=0),
+            "format": lambda _, v, y: v.replace(microsecond=0) if v is not None else "n/a",
             "help": "Maximum datetime",
         },
     ]
@@ -302,7 +302,7 @@ def index_error(config, log, id, stdout, indexfile):
             cmd = ["less"]
             subprocess.run(cmd, input=index.output(item))
         else:
-            print(index.output(item))
+            sys.stdout.write(index.output(item).decode("utf-8", errors="replace"))
 
 
 @click.group(help="SOA log commands.")

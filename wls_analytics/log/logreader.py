@@ -195,9 +195,9 @@ class LogReader(ABC):
             else:
                 break
 
-        if num_rights == 0 and time > last_dt:
+        if last_dt is not None and num_rights == 0 and time > last_dt:
             return -1, last_dt, False
-        if num_lefts == 0 and time < last_dt:
+        if last_dt is not None and num_lefts == 0 and time < last_dt:
             return -1, last_dt, True
         return dt_pos, last_dt, None
 
