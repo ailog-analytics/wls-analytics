@@ -302,7 +302,7 @@ def index_error(config, log, id, stdout, indexfile):
             cmd = ["less"]
             subprocess.run(cmd, input=index.output(item))
         else:
-            print(index.output(item))
+            sys.stdout.write(index.output(item).decode("utf-8", errors="replace"))
 
 
 @click.group(help="SOA log commands.")
