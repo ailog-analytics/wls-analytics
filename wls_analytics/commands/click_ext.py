@@ -25,6 +25,35 @@ from ..utils import format_str_color, bcolors
 from typing import Any, Dict, Sequence
 from click import Option
 
+from datetime import datetime, timedelta
+
+
+class DateTimeOption(click.Option):
+    def type_cast_value(self, ctx, value):
+        if value is None:
+            return None
+        for fmt in ["%Y-%m-%d %H:%M:%S", "%H:%M:%S", "%H:%M"]:
+            try:
+                return datetime.strptime(value, fmt)
+            except ValueError:
+                pass
+        raise click.BadParameter("use values in the format '%Y-%m-%d %H:%M:%S', '%H:%M:%S' or '%H:%M'.")
+
+
+class OffsetOption(click.Option):
+    def type_cast_value(self, ctx, value):
+        if value is None:
+            return None
+        offset_units = {"h": "hours", "d": "days", "m": "minutes"}
+        unit = value[-1]
+        if unit in offset_units:
+            try:
+                value = int(value[:-1])
+                return timedelta(**{offset_units[unit]: value})
+            except ValueError:
+                pass
+        raise click.BadParameter("use values like '1h', '2d', '10m'.")
+
 
 class CoreCommandGroup(click.core.Group):
     """

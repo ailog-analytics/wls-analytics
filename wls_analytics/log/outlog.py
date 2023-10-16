@@ -97,6 +97,48 @@ def get_files(folders, time_from, time_to, filename_matcher, datetime_format=DEF
     return _files
 
 
+class LabelParser:
+    def __init__(self, parsers_def, sets):
+        def _make_label_function(label):
+            def _x(m):
+                try:
+                    return label.format(*list([""] + list(m.groups())))
+                except Exception as e:
+                    return "__internal_error__"
+
+            def label_function(m):
+                return _x(m)
+
+            return label_function
+
+        self.parser = {}
+        for parser_def in parsers_def:
+            if any(item in parser_def["sets"] for item in sets):
+                for key, rules in parser_def["rules"].items():
+                    if key not in self.parser:
+                        self.parser[key] = []
+                    for rule in rules:
+                        self.parser[key].append(
+                            {"pattern": rule["pattern"], "value": _make_label_function(rule["value"])}
+                        )
+
+    def __call__(self, payloads):
+        data = {}
+        if len(self.parser) > 0:
+            data = {}
+            for key, rules in self.parser.items():
+                data[key] = None
+                for rule in rules:
+                    for payload in payloads:
+                        m = next(re.finditer(rule["pattern"], payload, re.MULTILINE), None)
+                        if m:
+                            data[key] = rule["value"](m) if callable(rule["value"]) else rule["value"]
+                            break
+                    if data[key] is not None:
+                        break
+        return data
+
+
 class OutLogEntry(LogEntry):
     """
     A class representing a single log entry.
@@ -196,19 +238,47 @@ class SOAOutLogEntry(OutLogEntry):
         return self._flow_id
 
 
+class OSBOutLogEntry(OutLogEntry):
+    def __init__(self, pos, datetime_format: str = DEFAULT_DATETIME_FORMAT) -> None:
+        """
+        Create a new OSB log entry.
+        """
+        super().__init__(pos, datetime_format)
+        self.service = None
+
+    def finish(self) -> None:
+        super().finish()
+        m = next(re.finditer(r"^\s*<([A-Za-z\/0-9]+)\:", self.payload), None)
+        if m is not None:
+            self.service = m.group(1).split("/")[-1]
+
+    def to_dict(self, label_parser=None, index=None):
+        d = dict(
+            time=self.time,
+            component=self.component,
+            type=self.type,
+            bea_code=self.bea_code,
+            service=self.service,
+        )
+        if label_parser is not None:
+            ext_data = label_parser([self.payload])
+            for k, v in ext_data.items():
+                if k not in d:
+                    d[k] = v
+                else:
+                    self.log.warning(f"Duplicate key {k} in OSBOutLogEntry.to_dict()")
+        return d
+
+
 class SOAGroupEntry:
-    def __init__(self, entry, ext_parser=None, index=None, logfile=None) -> None:
+    def __init__(self, entry) -> None:
         self.entries = []
         self.first_time = None
         self.last_time = None
         self.modified = False
         self.add_entry(entry)
-        self.ext_parser = ext_parser
         self._dn = None
         self._seconds = None
-        self.index = index
-        self.logfile = logfile
-        self._ext_data = None
         self.log = logging.getLogger("soa-group-entry")
 
     def add_entry(self, entry) -> bool:
@@ -293,23 +363,7 @@ class SOAGroupEntry:
     def timespan(self):
         return self.last_time - self.first_time
 
-    @property
-    def ext_data(self):
-        if self._ext_data is None and self.ext_parser is not None:
-            self._ext_data = {}
-            for key, rules in self.ext_parser.items():
-                self._ext_data[key] = None
-                for rule in rules:
-                    for e in self.entries:
-                        m = next(re.finditer(rule["pattern"], e.payload, re.MULTILINE), None)
-                        if m:
-                            self._ext_data[key] = rule["value"](m) if callable(rule["value"]) else rule["value"]
-                            break
-                    if self._ext_data[key] is not None:
-                        break
-        return self._ext_data
-
-    def to_dict(self):
+    def to_dict(self, label_parser=None):
         d = dict(
             time=self.time,
             flow_id=self.flow_id,
@@ -320,17 +374,18 @@ class SOAGroupEntry:
             component=self.component,
             seconds_begin=self.seconds_begin,
             seconds_left=self.seconds_left,
-            index=self.index.create_item(self, self.logfile) if self.index is not None else None,
         )
-        for k, v in self.ext_data.items():
-            if k not in d:
-                d[k] = v
-            else:
-                self.log.warning(f"Duplicate key {k} in SOAGroupEntry.to_dict()")
+        if label_parser is not None:
+            ext_data = label_parser([e.payload for e in self.entries])
+            for k, v in ext_data.items():
+                if k not in d:
+                    d[k] = v
+                else:
+                    self.log.warning(f"Duplicate key {k} in SOAGroupEntry.to_dict()")
         return d
 
 
-class SOAGroupIndex:
+class EntryIndex:
     def __init__(
         self,
         time_from: datetime = None,
@@ -347,12 +402,10 @@ class SOAGroupIndex:
         self.indexfile = indexfile if indexfile is not None else SOAERRORS_INDEXFILE
         self.generator = IndexWordGenerator()
 
-    def create_item(self, group, logfile):
+    def create_item(self, logfile, messages):
         index_item = dict(
             id=None,
-            composite=group.composite,
-            version=group.version,
-            messages=[e.message for e in group.entries],
+            messages=messages,
         )
         index_item["id"] = next(self.generator)
         if logfile not in self.items:
@@ -415,24 +468,9 @@ class SOAGroupIndex:
         with open(self.indexfile, "rb") as f:
             return self._read_header(f)
 
-    def read_file_entries(self, file, ext_parser=None, progress=None):
-        _entries = []
-        for item in self.items[file]:
-            for m in self.decompress(item)["messages"]:
-                _entry = SOAOutLogEntry(0)
-                _entry.lines = m.split("\n")
-                _entry.parse_header(_entry.lines[0])
-                _entry.finish()
-                if progress is not None:
-                    progress.update(len(_entry.message))
-                _entries.append(_entry)
-        return _entries
-
     def output(self, item):
         meta = dict(
             index_id=item["data"]["id"],
-            composite=item["data"]["composite"],
-            version=item["data"]["version"],
             log_file=item["logfile"],
             index_file=self.indexfile,
         )
@@ -479,8 +517,6 @@ class SOALogReader(LogReader):
         self,
         entries: list,
         time_to: datetime,
-        ext_parser=None,
-        index=None,
     ) -> Iterator[SOAGroupEntry]:
         """
         Read SOA errors from the log file.
@@ -496,7 +532,7 @@ class SOALogReader(LogReader):
                             group = g
                             break
                     if group is None:
-                        groups.append(SOAGroupEntry(entry, ext_parser=ext_parser, index=index, logfile=self.logfile))
+                        groups.append(SOAGroupEntry(entry))
                 else:
                     # add extra entry to the existing group. the entry is beyond the end of the the time range
                     # but it has flow_id of the existing group so we need to include it
@@ -506,3 +542,39 @@ class SOALogReader(LogReader):
                             break
 
         return groups
+
+
+class OSBLogReader(LogReader):
+    """
+    A class for reading SOA log files.
+    """
+
+    def __init__(self, soaout_log: str, datetime_format: str = DEFAULT_DATETIME_FORMAT) -> None:
+        """
+        Create a new SOA log reader.
+        """
+        super().__init__(soaout_log, datetime_format, OSBOutLogEntry)
+
+    def read_entries(
+        self,
+        time_from: datetime = None,
+        start_pos: int = None,
+        time_to: datetime = None,
+        chunk_size=1024,
+        progress=None,
+    ) -> Iterator[LogEntry]:
+        if time_from is not None and start_pos is not None:
+            raise ValueError("Only one of time_from or start_pos should be provided, not both.")
+
+        entries = []
+        for entry in self.read(
+            time_from=time_from,
+            start_pos=start_pos,
+            time_to=time_to,
+            chunk_size=chunk_size,
+        ):
+            entries.append(entry)
+            if progress is not None:
+                progress.update(len(entry.message))
+
+        return entries

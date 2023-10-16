@@ -5,10 +5,12 @@ from .logreader import LogEntry, LogReader
 from .outlog import (
     SOAOutLogEntry,
     SOALogReader,
+    OSBLogReader,
     OutLogEntry,
     get_files,
     list_files,
     DEFAULT_DATETIME_FORMAT,
-    SOAGroupIndex,
+    EntryIndex,
     cleanup_indexdir,
+    LabelParser,
 )
