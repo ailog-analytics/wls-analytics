@@ -192,7 +192,6 @@ class ConfigPart:
         return self.value(path, default, type, required, no_eval)
 
     def value(self, path, default=None, type=None, required=True, no_eval=False):
-        required = default is not None and required
         r = default
         if self._config is not None:
             val = reduce(
