@@ -178,16 +178,15 @@ class OSBOutLogEntry(OutLogEntry):
 
     def finish(self) -> None:
         super().finish()
-        m = next(re.finditer(r"^\s*<([A-Za-z\/0-9]+)\:", self.payload), None)
+        m = next(re.finditer(r"^\s*<([A-Za-z\/0-9_]+)", self.payload), None)
         if m is not None:
             self.service = m.group(1).split("/")[-1]
             if self.service == "servicebus":
-                m = next(re.finditer(r"^\s*<servicebus:([A-Za-z\/0-9]+)", self.payload), None)
+                m = next(re.finditer(r"^\s*<servicebus:([A-Za-z\/0-9_]+)", self.payload), None)
                 if m is not None:
-                    # there might be ".wsdl" at the end of the service name, we need to remove it
-                    self.service = m.group(1).split("/")[-1].split("/.")[0]
+                    self.service = m.group(1).split("/")[-1]
         else:
-            m = next(re.finditer(r"^\s*<\[service_name: ([A-Za-z\/0-9]+)\]", self.payload), None)
+            m = next(re.finditer(r"^\s*<\[service_name: ([A-Za-z\/0-9_]+)\]", self.payload), None)
             if m is not None:
                 self.service = m.group(1).split("/")[-1]
 
