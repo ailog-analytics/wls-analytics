@@ -5,6 +5,8 @@
 sets:
   # set name
   o2c:
+    reader: wls_analytics.SOALogReader
+
     # regular expression to match log file names
     # the first group is used as a server name
     filename_pattern: "(soa_server[0-9]+).out([0-9]+)?$"

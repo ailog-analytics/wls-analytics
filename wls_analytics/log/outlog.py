@@ -3,21 +3,13 @@
 
 import re
 import os
-import gzip
-from .logreader import LogEntry, LogReader
+from .logreader import LogEntry, LogReader, LabelParser
 import logging
-import struct
-import time
-
-from ..utils import IndexWordGenerator
-from ..config import DATA_DIR
+import sys
 
 from typing import Iterator, Tuple
 
 from datetime import datetime, timedelta
-import sys
-
-import pickle
 
 
 DEFAULT_DATETIME_FORMAT = "%b %d, %Y %I:%M:%S,%f %p UTC"
@@ -27,26 +19,6 @@ EXCEPTION_PATTERN = re.compile(r"\b([a-zA-Z\.0-9]+?\.[a-zA-Z0-9]+?Exception)(?!\
 
 COMPONENT_PATTERN = re.compile(r"ComponentDN: ([\w]+)\/([\w]+)\!([0-9\.]+).*?\/([\w]+)", re.MULTILINE)
 SECONDS_PATTERN = re.compile(r"seconds since begin=([0-9]+).+seconds left=([0-9]+)", re.MULTILINE)
-
-try:
-    SESSION_ID = os.getsid(os.getpid())
-except:
-    SESSION_ID = 0
-
-INDEX_DIR = os.path.join(DATA_DIR, "index")
-SOAERRORS_INDEXFILE = os.path.join(INDEX_DIR, f"wlsa-soaerrors-{SESSION_ID}.index")
-
-
-def cleanup_indexdir(max_age=5):
-    if os.path.exists(INDEX_DIR):
-        for f in os.listdir(INDEX_DIR):
-            if f.endswith(".index"):
-                fname = os.path.join(INDEX_DIR, f)
-                mtime = os.path.getmtime(fname)
-                mod_time = datetime.fromtimestamp(mtime)
-                age = datetime.now() - mod_time
-                if age.days > max_age:
-                    os.remove(fname)
 
 
 def list_files(folders, filename_matcher):
@@ -64,12 +36,12 @@ def list_files(folders, filename_matcher):
     return _files
 
 
-def get_files(folders, time_from, time_to, filename_matcher, datetime_format=DEFAULT_DATETIME_FORMAT):
+def get_files(reader_class, folders, time_from, time_to, filename_matcher, datetime_format=DEFAULT_DATETIME_FORMAT):
     _files = {}
     for server_name, files in list_files(folders, filename_matcher).items():
         for fname in files:
             end_pos = os.path.getsize(fname)  # this is not precise but for our purposes it is ok
-            reader = LogReader(fname, datetime_format=datetime_format, logentry_class=OutLogEntry)
+            reader = reader_class(fname, datetime_format=datetime_format, logentry_class=OutLogEntry)
             start_pos1, dt1, is_min1 = reader.find(time_from)
             min_dt1, max_dt1 = dt1 if is_min1 else None, dt1 if not is_min1 else None
             if start_pos1 < 0:
@@ -97,58 +69,16 @@ def get_files(folders, time_from, time_to, filename_matcher, datetime_format=DEF
     return _files
 
 
-class LabelParser:
-    def __init__(self, parsers_def, sets):
-        def _make_label_function(label):
-            def _x(m):
-                try:
-                    return label.format(*list([""] + list(m.groups())))
-                except Exception as e:
-                    return "__internal_error__"
-
-            def label_function(m):
-                return _x(m)
-
-            return label_function
-
-        self.parser = {}
-        for parser_def in parsers_def:
-            if any(item in parser_def["sets"] for item in sets):
-                for key, rules in parser_def["rules"].items():
-                    if key not in self.parser:
-                        self.parser[key] = []
-                    for rule in rules:
-                        self.parser[key].append(
-                            {"pattern": rule["pattern"], "value": _make_label_function(rule["value"])}
-                        )
-
-    def __call__(self, payloads):
-        data = {}
-        if len(self.parser) > 0:
-            data = {}
-            for key, rules in self.parser.items():
-                data[key] = None
-                for rule in rules:
-                    for payload in payloads:
-                        m = next(re.finditer(rule["pattern"], payload, re.MULTILINE), None)
-                        if m:
-                            data[key] = rule["value"](m) if callable(rule["value"]) else rule["value"]
-                            break
-                    if data[key] is not None:
-                        break
-        return data
-
-
 class OutLogEntry(LogEntry):
     """
     A class representing a single log entry.
     """
 
-    def __init__(self, pos: int, datetime_format: str = DEFAULT_DATETIME_FORMAT) -> None:
+    def __init__(self, datetime_format: str = DEFAULT_DATETIME_FORMAT) -> None:
         """
         Create a new log entry.
         """
-        super().__init__(pos, datetime_format)
+        super().__init__(datetime_format)
         self.type = None
         self.component = None
         self.bea_code = None
@@ -187,7 +117,7 @@ class OutLogEntry(LogEntry):
         """
         try:
             parser = self.line_parser(line)
-            self.time = datetime.strptime(next(parser)[0], self.datetime_format)
+            self._time = datetime.strptime(next(parser)[0], self.datetime_format)
             self.type = next(parser)[0]
             self.component = next(parser)[0]
             self.bea_code, self.startinx_payload = next(parser)
@@ -222,11 +152,11 @@ class OutLogEntry(LogEntry):
 
 
 class SOAOutLogEntry(OutLogEntry):
-    def __init__(self, pos, datetime_format: str = DEFAULT_DATETIME_FORMAT) -> None:
+    def __init__(self, datetime_format: str = DEFAULT_DATETIME_FORMAT) -> None:
         """
         Create a new SOA log entry.
         """
-        super().__init__(pos, datetime_format)
+        super().__init__(datetime_format)
         self._flow_id = None
 
     @property
@@ -239,11 +169,11 @@ class SOAOutLogEntry(OutLogEntry):
 
 
 class OSBOutLogEntry(OutLogEntry):
-    def __init__(self, pos, datetime_format: str = DEFAULT_DATETIME_FORMAT) -> None:
+    def __init__(self, datetime_format: str = DEFAULT_DATETIME_FORMAT) -> None:
         """
         Create a new OSB log entry.
         """
-        super().__init__(pos, datetime_format)
+        super().__init__(datetime_format)
         self.service = None
 
     def finish(self) -> None:
@@ -251,8 +181,17 @@ class OSBOutLogEntry(OutLogEntry):
         m = next(re.finditer(r"^\s*<([A-Za-z\/0-9]+)\:", self.payload), None)
         if m is not None:
             self.service = m.group(1).split("/")[-1]
+            if self.service == "servicebus":
+                m = next(re.finditer(r"^\s*<servicebus:([A-Za-z\/0-9]+)", self.payload), None)
+                if m is not None:
+                    # there might be ".wsdl" at the end of the service name, we need to remove it
+                    self.service = m.group(1).split("/")[-1].split("/.")[0]
+        else:
+            m = next(re.finditer(r"^\s*<\[service_name: ([A-Za-z\/0-9]+)\]", self.payload), None)
+            if m is not None:
+                self.service = m.group(1).split("/")[-1]
 
-    def to_dict(self, label_parser=None, index=None):
+    def to_dict(self, label_parser=None):
         d = dict(
             time=self.time,
             component=self.component,
@@ -270,13 +209,14 @@ class OSBOutLogEntry(OutLogEntry):
         return d
 
 
-class SOAGroupEntry:
-    def __init__(self, entry) -> None:
+class SOAGroupEntry(LogEntry):
+    def __init__(self, datetime_format: str = DEFAULT_DATETIME_FORMAT) -> None:
+        super().__init__(datetime_format)
+        self.type = "Error"
         self.entries = []
         self.first_time = None
         self.last_time = None
         self.modified = False
-        self.add_entry(entry)
         self._dn = None
         self._seconds = None
         self.log = logging.getLogger("soa-group-entry")
@@ -363,6 +303,10 @@ class SOAGroupEntry:
     def timespan(self):
         return self.last_time - self.first_time
 
+    @property
+    def message(self):
+        return "\n".join([e.message for e in self.entries])
+
     def to_dict(self, label_parser=None):
         d = dict(
             time=self.time,
@@ -384,97 +328,11 @@ class SOAGroupEntry:
                     self.log.warning(f"Duplicate key {k} in SOAGroupEntry.to_dict()")
         return d
 
+    def line_parser(self, line: str) -> Iterator[str]:
+        raise NotImplementedError("SOAGroupEntry.line_parser() is not implemented.")
 
-class EntryIndex:
-    def __init__(
-        self,
-        time_from: datetime = None,
-        time_to: datetime = None,
-        set_name: str = None,
-        indexfile=None,
-        compress=True,
-    ):
-        self.time_from = time_from
-        self.time_to = time_to
-        self.set_name = set_name
-        self._compress = compress
-        self.items = {}
-        self.indexfile = indexfile if indexfile is not None else SOAERRORS_INDEXFILE
-        self.generator = IndexWordGenerator()
-
-    def create_item(self, logfile, messages):
-        index_item = dict(
-            id=None,
-            messages=messages,
-        )
-        index_item["id"] = next(self.generator)
-        if logfile not in self.items:
-            self.items[logfile] = []
-        self.items[logfile].append(self.compress(index_item))
-        return index_item["id"]
-
-    def compress(self, item):
-        if self._compress and "messages" in item:
-            item["messages"] = [gzip.compress(m.encode("utf-8")) for m in item["messages"]]
-        return item
-
-    def decompress(self, item):
-        if self._compress and "messages" in item:
-            item["messages"] = [gzip.decompress(m).decode("utf-8") for m in item["messages"]]
-        return item
-
-    def search(self, id):
-        for logfile, items in self.items.items():
-            for item in items:
-                if item["id"] == id:
-                    return dict(logfile=logfile, data=self.decompress(item))
-        return None
-
-    def _write_header(self, f):
-        fixed_length = 20
-        f.write(struct.pack("d", self.time_from.timestamp()))
-        f.write(struct.pack("d", self.time_to.timestamp()))
-        f.write(self.set_name.encode("utf-8")[:fixed_length].ljust(fixed_length, b"\0"))
-
-    def _read_header(self, f):
-        time_from = datetime.fromtimestamp(struct.unpack("d", f.read(8))[0])
-        time_to = datetime.fromtimestamp(struct.unpack("d", f.read(8))[0])
-        set_name = f.read(20).decode("utf-8").strip().rstrip("\0")
-        return dict(
-            time_from=time_from,
-            time_to=time_to,
-            set_name=set_name,
-        )
-
-    def write(self):
-        _dir = os.path.dirname(self.indexfile)
-        if _dir != "" and not os.path.exists(_dir):
-            os.makedirs(_dir, exist_ok=True)
-        with open(self.indexfile, "wb") as f:
-            self._write_header(f)
-            pickle.dump(self, f)
-
-    def read(self):
-        if not os.path.exists(self.indexfile):
-            raise FileNotFoundError(f"Index file {self.indexfile} does not exist.")
-        with open(self.indexfile, "rb") as f:
-            self._read_header(f)
-            index = pickle.load(f)
-        self.items = index.items
-
-    def read_header(self):
-        if not os.path.exists(self.indexfile):
-            return None
-        with open(self.indexfile, "rb") as f:
-            return self._read_header(f)
-
-    def output(self, item):
-        meta = dict(
-            index_id=item["data"]["id"],
-            log_file=item["logfile"],
-            index_file=self.indexfile,
-        )
-        return "\n".join([f"{k:<12}: {v}" for k, v in meta.items()] + [""] + item["data"]["messages"]).encode("utf-8")
+    def parse_header(self, line) -> bool:
+        raise NotImplementedError("SOAGroupEntry.parse_header() is not implemented.")
 
 
 class SOALogReader(LogReader):
@@ -482,7 +340,7 @@ class SOALogReader(LogReader):
     A class for reading SOA log files.
     """
 
-    def __init__(self, soaout_log: str, datetime_format: str = DEFAULT_DATETIME_FORMAT) -> None:
+    def __init__(self, soaout_log: str, datetime_format: str = DEFAULT_DATETIME_FORMAT, logentry_class=None) -> None:
         """
         Create a new SOA log reader.
         """
@@ -511,17 +369,6 @@ class SOALogReader(LogReader):
             if progress is not None:
                 progress.update(len(entry.message))
 
-        return entries
-
-    def group_entries(
-        self,
-        entries: list,
-        time_to: datetime,
-    ) -> Iterator[SOAGroupEntry]:
-        """
-        Read SOA errors from the log file.
-        """
-
         groups = []
         for entry in entries:
             if entry.flow_id is not None:
@@ -532,7 +379,9 @@ class SOALogReader(LogReader):
                             group = g
                             break
                     if group is None:
-                        groups.append(SOAGroupEntry(entry))
+                        g = SOAGroupEntry()
+                        g.add_entry(entry)
+                        groups.append(g)
                 else:
                     # add extra entry to the existing group. the entry is beyond the end of the the time range
                     # but it has flow_id of the existing group so we need to include it
@@ -543,15 +392,37 @@ class SOALogReader(LogReader):
 
         return groups
 
+    @staticmethod
+    def get_tabledef(label_parser=None, add_index=False):
+        def format_composite(c, v, e):
+            max_len = 35
+            if len(v) > max_len and sys.stdout.isatty():
+                return v[: max_len - 1] + "…"
+            else:
+                return v
+
+        table_def = [
+            {"name": "TIME", "value": "{time}", "help": "Error time"},
+            {"name": "SERVER", "value": "{server}", "help": "Server name"},
+            {"name": "FLOW_ID", "value": "{flow_id}", "help": "Flow ID"},
+            {"name": "COMPOSITE", "value": "{composite}", "format": format_composite, "help": "Composite name"},
+        ]
+        if label_parser is not None:
+            for key in label_parser.parser.keys():
+                table_def.append({"name": key.upper(), "value": "{" + key + "}", "help": "Extended attribute"})
+        if add_index:
+            table_def.append({"name": "INDEX", "value": "{index}", "help": "Index entry ID"})
+        return table_def
+
 
 class OSBLogReader(LogReader):
     """
-    A class for reading SOA log files.
+    A class for reading OSB log files.
     """
 
-    def __init__(self, soaout_log: str, datetime_format: str = DEFAULT_DATETIME_FORMAT) -> None:
+    def __init__(self, soaout_log: str, datetime_format: str = DEFAULT_DATETIME_FORMAT, logentry_class=None) -> None:
         """
-        Create a new SOA log reader.
+        Create a new OSB log reader.
         """
         super().__init__(soaout_log, datetime_format, OSBOutLogEntry)
 
@@ -578,3 +449,23 @@ class OSBLogReader(LogReader):
                 progress.update(len(entry.message))
 
         return entries
+
+    @staticmethod
+    def get_tabledef(label_parser=None, add_index=False):
+        table_def = [
+            {"name": "TIME", "value": "{time}", "help": "Error time"},
+            {"name": "SERVER", "value": "{server}", "help": "Server name"},
+            {
+                "name": "COMPONENT",
+                "value": "{component}",
+                "format": lambda x, v, y: v.split(".")[-1],
+                "help": "OSB component",
+            },
+            {"name": "CODE", "value": "{bea_code}", "help": "BEA error code"},
+            {"name": "SERVICE", "value": "{service}", "help": "OSB Service"},
+        ]
+        for key in label_parser.parser.keys():
+            table_def.append({"name": key.upper(), "value": "{" + key + "}", "help": "Extended attribute"})
+        if add_index:
+            table_def.append({"name": "INDEX", "value": "{index}", "help": "Index entry ID"})
+        return table_def

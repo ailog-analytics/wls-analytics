@@ -7,8 +7,6 @@ import traceback
 import sys
 
 from .log import log
-from .soalog import soa
-from .osblog import osb
 from .click_ext import CoreCommandGroup
 from .. import config
 

@@ -21,11 +21,33 @@ from .. import config
 from wls_analytics import __version__ as version
 from ..config import init_logging
 from ..utils import format_str_color, bcolors
+from ..utils import import_class
 
 from typing import Any, Dict, Sequence
 from click import Option
 
 from datetime import datetime, timedelta
+
+
+def get_set_reader(config, set_name):
+    logs_set = config(f"sets.{set_name}")
+    cls_name = config(f"sets.{set_name}.reader")
+    reader_class = import_class(cls_name, raise_ex=False)
+    if reader_class is None:
+        raise Exception(f"The reader class '{cls_name}' for the set '{set_name}' cannot be imported!")
+    if logs_set is None:
+        raise Exception(f"The log set '{set_name}' not found in the configuration file.")
+    return logs_set, reader_class
+
+
+def get_time_range(time_from, time_to, offset):
+    if time_from is None and time_to is None:
+        raise Exception("Either --from or --to must be specified.")
+    if time_to is None:
+        time_to = datetime.now()
+    if time_from is None and offset is not None:
+        time_from = time_to - offset
+    return time_from, time_to
 
 
 class DateTimeOption(click.Option):

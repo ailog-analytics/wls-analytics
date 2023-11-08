@@ -2,61 +2,29 @@
 # @author: Tomas Vitvar, https://vitvar.com, tomas.vitvar@oracle.com
 
 import click
-from datetime import datetime, timedelta
-from tqdm import tqdm
 import os
 import re
-import json
-import time
-import threading
 import sys
 import subprocess
-import operator
-
 
 from ..log import (
-    SOALogReader,
     LogReader,
     OutLogEntry,
-    get_files,
     list_files,
     DEFAULT_DATETIME_FORMAT,
     EntryIndex,
-    cleanup_indexdir,
 )
 
+from .outlog import out_log
+
 from ..json2table import Table
-from ..config import DATA_DIR
-
-from .click_ext import BaseCommandConfig, DateTimeOption, OffsetOption
-
-
-def filter_rows(data, expression):
-    class RegexString(str):
-        def __eq__(self, other):
-            return bool(re.match("^" + other + "$", str(self)))
-
-    scope = {}
-    result = []
-    for row in data:
-        for key, value in row.items():
-            if isinstance(value, str):
-                scope[key] = RegexString(value)
-            else:
-                scope[key] = value
-        if eval(expression, scope):
-            result.append(row)
-
-    return result
+from .click_ext import BaseCommandConfig, get_set_reader
 
 
 @click.command(name="range", cls=BaseCommandConfig, help="Display log time ranges.", log_handlers=["file"])
 @click.argument("set_name", metavar="<SET>", required=True)
 def get_range(config, log, set_name):
-    logs_set = config(f"sets.{set_name}")
-    if logs_set is None:
-        raise Exception(f"The log set '{set_name}' not found in the configuration file.")
-
+    logs_set, reader_class = get_set_reader(config, set_name)
     range_data = []
     for server_name, files in list_files(
         logs_set.directories, lambda fname: re.search(logs_set.filename_pattern, fname)
@@ -65,7 +33,7 @@ def get_range(config, log, set_name):
         range_data.append(range_item)
         for fname in files:
             range_item["size"] += os.path.getsize(fname)
-            reader = LogReader(fname, datetime_format=DEFAULT_DATETIME_FORMAT, logentry_class=OutLogEntry)
+            reader = reader_class(fname, datetime_format=DEFAULT_DATETIME_FORMAT, logentry_class=OutLogEntry)
             first, _ = reader.get_datetime(True)
             last, _ = reader.get_datetime(False)
             if first is not None and (range_item["min"] is None or first < range_item["min"]):
@@ -99,7 +67,7 @@ def get_range(config, log, set_name):
     Table(table_def, None, False).display(range_data)
 
 
-@click.command(name="index", cls=BaseCommandConfig, log_handlers=["file"], help="Read entries from log index.")
+@click.command(name="index", cls=BaseCommandConfig, log_handlers=["file"], help="Display entries from index file.")
 @click.argument("id", required=True)
 @click.option("--stdout", "-s", is_flag=True, help="Print to stdout instead of using less")
 @click.option("--index-file", "indexfile", default=None, help="Use index file instead of the default one.")
@@ -124,3 +92,4 @@ def log():
 
 log.add_command(get_range)
 log.add_command(index_error)
+log.add_command(out_log)
