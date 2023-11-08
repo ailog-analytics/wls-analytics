@@ -162,12 +162,18 @@ def deep_find(dic, keys, default=None, type=None, delim="."):
     return type(val) if type != None else val
 
 
-def import_class(name):
-    components = name.split(".")
-    mod = __import__(components[0])
-    for comp in components[1:]:
-        mod = getattr(mod, comp)
-    return mod
+def import_class(name, raise_ex=True):
+    try:
+        components = name.split(".")
+        mod = __import__(components[0])
+        for comp in components[1:]:
+            mod = getattr(mod, comp)
+        return mod
+    except Exception as e:
+        if raise_ex:
+            raise
+        else:
+            return None
 
 
 def randomString(stringLength=10):
