@@ -145,6 +145,6 @@ def out_log(config, log, silent, set_name, time_from, time_to, offset, use_index
     if not silent:
         print(f"-- Completed in {time.time() - start_time:.2f}s")
 
-    Table(reader_class.get_tabledef(label_parser, use_index), None, False).display(data)
+    Table(reader_class(None).get_tabledef(label_parser, use_index), None, False).display(data)
     if not silent:
         print(f"-- Errors: {len(data)}")

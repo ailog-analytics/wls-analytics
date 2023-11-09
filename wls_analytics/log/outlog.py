@@ -334,6 +334,24 @@ class SOAGroupEntry(LogEntry):
         raise NotImplementedError("SOAGroupEntry.parse_header() is not implemented.")
 
 
+def format_composite(c, v, e):
+    """
+    Tabledef formatter for composite name.
+    """
+    max_len = 35
+    if len(v) > max_len and sys.stdout.isatty():
+        return v[: max_len - 1] + "…"
+    else:
+        return v
+
+
+def format_time(v, datetime_format):
+    """
+    Tabledef formatter for time.
+    """
+    return v
+
+
 class SOALogReader(LogReader):
     """
     A class for reading SOA log files.
@@ -391,17 +409,14 @@ class SOALogReader(LogReader):
 
         return groups
 
-    @staticmethod
-    def get_tabledef(label_parser=None, add_index=False):
-        def format_composite(c, v, e):
-            max_len = 35
-            if len(v) > max_len and sys.stdout.isatty():
-                return v[: max_len - 1] + "…"
-            else:
-                return v
-
+    def get_tabledef(self, label_parser=None, add_index=False):
         table_def = [
-            {"name": "TIME", "value": "{time}", "help": "Error time"},
+            {
+                "name": "TIME",
+                "value": "{time}",
+                "format": lambda e, v, c: format_time(v, self.datetime_format),
+                "help": "Error time",
+            },
             {"name": "SERVER", "value": "{server}", "help": "Server name"},
             {"name": "FLOW_ID", "value": "{flow_id}", "help": "Flow ID"},
             {"name": "COMPOSITE", "value": "{composite}", "format": format_composite, "help": "Composite name"},
@@ -449,10 +464,14 @@ class OSBLogReader(LogReader):
 
         return entries
 
-    @staticmethod
-    def get_tabledef(label_parser=None, add_index=False):
+    def get_tabledef(self, label_parser=None, add_index=False):
         table_def = [
-            {"name": "TIME", "value": "{time}", "help": "Error time"},
+            {
+                "name": "TIME",
+                "value": "{time}",
+                "format": lambda e, v, c: format_time(v, self.datetime_format),
+                "help": "Error time",
+            },
             {"name": "SERVER", "value": "{server}", "help": "Server name"},
             {
                 "name": "COMPONENT",
