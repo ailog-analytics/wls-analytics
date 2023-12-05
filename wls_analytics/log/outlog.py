@@ -178,17 +178,22 @@ class OSBOutLogEntry(OutLogEntry):
 
     def finish(self) -> None:
         super().finish()
-        m = next(re.finditer(r"^\s*<([A-Za-z\/0-9_]+)", self.payload), None)
-        if m is not None:
-            self.service = m.group(1).split("/")[-1]
-            if self.service == "servicebus":
-                m = next(re.finditer(r"^\s*<servicebus:([A-Za-z\/0-9_]+)", self.payload), None)
-                if m is not None:
-                    self.service = m.group(1).split("/")[-1]
-        else:
-            m = next(re.finditer(r"^\s*<\[service_name: ([A-Za-z\/0-9_]+)\]", self.payload), None)
+
+        # parse the name of the service from the payload
+        # this is only relevant when the component is a class "oracle.osb.pipeline"
+        self.service = "Unknown"
+        if self.component.startswith("oracle.osb.pipeline"):
+            m = next(re.finditer(r"^\s*<([A-Za-z\/0-9_]+)", self.payload), None)
             if m is not None:
                 self.service = m.group(1).split("/")[-1]
+                if self.service == "servicebus":
+                    m = next(re.finditer(r"^\s*<servicebus:([A-Za-z\/0-9_]+)", self.payload), None)
+                    if m is not None:
+                        self.service = m.group(1).split("/")[-1]
+            else:
+                m = next(re.finditer(r"^\s*<\[service_name: ([A-Za-z\/0-9_]+)\]", self.payload), None)
+                if m is not None:
+                    self.service = m.group(1).split("/")[-1]
 
     def to_dict(self, label_parser=None):
         d = dict(
