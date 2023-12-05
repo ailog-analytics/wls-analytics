@@ -182,7 +182,7 @@ class OSBOutLogEntry(OutLogEntry):
         # parse the name of the service from the payload
         # this is only relevant when the component is a class "oracle.osb.pipeline"
         self.service = "Unknown"
-        if self.component.startswith("oracle.osb.pipeline"):
+        if self.component is not None and self.component.startswith("oracle.osb.pipeline"):
             m = next(re.finditer(r"^\s*<([A-Za-z\/0-9_]+)", self.payload), None)
             if m is not None:
                 self.service = m.group(1).split("/")[-1]
